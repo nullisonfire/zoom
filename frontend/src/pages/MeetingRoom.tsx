@@ -154,13 +154,13 @@ export const MeetingRoom: React.FC<MeetingRoomProps> = ({ publicId, onLeave }) =
       callsClientRef.current = callsClient;
 
       callsClient.setCallbacks({
-        onRemoteTrack: (trackId, stream) => {
-          setRemoteStreams((prev) => new Map(prev).set(trackId, stream));
+        onRemoteTrack: (participantId, stream) => {
+          setRemoteStreams((prev) => new Map(prev).set(participantId, stream));
         },
-        onRemoteTrackRemoved: (trackId) => {
+        onRemoteTrackRemoved: (participantId) => {
           setRemoteStreams((prev) => {
             const next = new Map(prev);
-            next.delete(trackId);
+            next.delete(participantId);
             return next;
           });
         },

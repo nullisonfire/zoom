@@ -35,6 +35,7 @@ export class CallsWebRTCClient {
   private remoteTracks = new Map<string, { audio?: MediaStreamTrack; video?: MediaStreamTrack; screen?: MediaStreamTrack }>();
   private remoteStreams = new Map<string, MediaStream>();
   private subscriptionChain: Promise<void> = Promise.resolve();
+  private subscribedPublications = new Set<string>();
   private screenTransceiver: RTCRtpTransceiver | null = null;
 
   private localAudioTrack: MediaStreamTrack | null = null;
@@ -191,24 +192,66 @@ export class CallsWebRTCClient {
   private async subscribeOne(trackInfo: CallsTrackInfo): Promise<void> {
     if (!this.pullPeer || !this.subscribeSessionId) return;
 
+    // A publication is uniquely identified by its publisher session + track name.
+    // Avoid requesting the same publication twice when room snapshots and
+    // track_published events arrive close together.
+    const publicationKey = `${trackInfo.callsSessionId}:${trackInfo.trackId}`;
+    if (this.subscribedPublications.has(publicationKey)) return;
+
+    const trackName = trackInfo.trackType === 'audio'
+      ? 'microphone'
+      : trackInfo.trackType === 'video'
+        ? 'camera'
+        : 'screen';
+
+    // Cloudflare's receiving recipe intentionally sends tracks/new WITHOUT a
+    // browser offer. The SFU creates the offer containing the receive m-line.
     const response = await api.updateCallsTracks(this.publicId, this.subscribeSessionId, {
       tracks: [{
         location: 'remote',
         sessionId: trackInfo.callsSessionId,
-        trackName: trackInfo.trackType === 'audio' ? 'microphone' : trackInfo.trackType === 'video' ? 'camera' : 'screen',
+        trackName,
       }],
     });
 
-    const result = response?.tracks?.find((t: any) => t.location === 'remote' && t.mid);
-    if (result?.mid) this.remoteMidMap.set(result.mid, { participantId: trackInfo.participantId, trackType: trackInfo.trackType });
+    const result = response?.tracks?.find(
+      (t: any) => t.location === 'remote' && t.status !== 'failed' && t.mid
+    );
+    if (!result?.mid) {
+      throw new Error(`Cloudflare Calls did not allocate a receiving mid for ${trackName}`);
+    }
 
-    if (!response?.sessionDescription) return;
+    // Map the SFU's receiving mid BEFORE applying the SFU offer, because the
+    // browser may fire ontrack as soon as setRemoteDescription completes.
+    this.remoteMidMap.set(result.mid, {
+      participantId: trackInfo.participantId,
+      trackType: trackInfo.trackType,
+    });
+
+    if (!response?.sessionDescription) {
+      throw new Error(`Cloudflare Calls returned no SDP offer for ${trackName}`);
+    }
+
+    if (response.sessionDescription.type !== 'offer') {
+      throw new Error(`Expected an SFU offer for ${trackName}, received ${response.sessionDescription.type}`);
+    }
 
     await this.pullPeer.setRemoteDescription(response.sessionDescription);
     const answer = await this.pullPeer.createAnswer();
     await this.pullPeer.setLocalDescription(answer);
     await waitForIceGatheringComplete(this.pullPeer);
-    await api.renegotiateCallsSession(this.publicId, this.subscribeSessionId, this.pullPeer.localDescription);
+
+    if (!this.pullPeer.localDescription) {
+      throw new Error(`No local SDP answer was produced for ${trackName}`);
+    }
+
+    await api.renegotiateCallsSession(
+      this.publicId,
+      this.subscribeSessionId,
+      this.pullPeer.localDescription,
+    );
+
+    this.subscribedPublications.add(publicationKey);
   }
 
   setAudioEnabled(enabled: boolean): void {
@@ -233,5 +276,6 @@ export class CallsWebRTCClient {
     this.remoteStreams.clear();
     this.remoteTracks.clear();
     this.remoteMidMap.clear();
+    this.subscribedPublications.clear();
   }
 }

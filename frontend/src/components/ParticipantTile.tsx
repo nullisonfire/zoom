@@ -21,13 +21,13 @@ export const ParticipantTile: React.FC<ParticipantTileProps> = ({
 
   useEffect(() => {
     if (videoRef.current) {
-      if (participant.videoEnabled && stream && stream.getVideoTracks().length > 0) {
+      if ((participant.videoEnabled || participant.screenSharing) && stream && stream.getVideoTracks().length > 0) {
         videoRef.current.srcObject = stream;
       } else {
         videoRef.current.srcObject = null;
       }
     }
-  }, [stream, participant.videoEnabled]);
+  }, [stream, participant.videoEnabled, participant.screenSharing]);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -58,7 +58,7 @@ export const ParticipantTile: React.FC<ParticipantTileProps> = ({
       <audio ref={audioRef} autoPlay playsInline className="hidden" />
 
       {/* Video Stream */}
-      {participant.videoEnabled && stream ? (
+      {(participant.videoEnabled || participant.screenSharing) && stream ? (
         <video
           ref={videoRef}
           autoPlay
