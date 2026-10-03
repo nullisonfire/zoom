@@ -1,0 +1,41 @@
+{
+  "name": "cloudflare-zoom",
+  "version": "1.0.0",
+  "description": "Production-ready Zoom-like video conferencing application natively built on Cloudflare Pages, Workers, D1, Durable Objects, Calls SFU, TURN, and R2",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "npm run build:worker && npm run build:frontend",
+    "build:worker": "node scripts/build.cjs",
+    "build:frontend": "cd frontend && npm run build",
+    "test": "node tests/runner.js",
+    "test:auth": "node tests/auth.test.js",
+    "test:meetings": "node tests/meetings.test.js",
+    "test:rooms": "node tests/rooms.test.js",
+    "test:realtime": "node tests/realtime.test.js",
+    "test:storage": "node tests/storage.test.js",
+    "test:e2e": "node tests/e2e.test.js",
+    "db:migrate:local": "wrangler d1 migrations apply zoom-db --local",
+    "db:migrate:preview": "wrangler d1 migrations apply zoom-db-preview --remote --env preview",
+    "db:migrate:prod": "wrangler d1 migrations apply zoom-db-production --remote --env production",
+    "deploy:worker": "wrangler deploy --env production",
+    "deploy:pages": "wrangler pages deploy frontend/dist --project-name cloudflare-zoom"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240923.0",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.31",
+    "tailwindcss": "^3.3.5",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.0",
+    "wrangler": "^3.78.0"
+  }
+}

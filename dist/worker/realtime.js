@@ -1,0 +1,149 @@
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.RealtimeService = void 0;
+/**
+ * Cloudflare Calls (Realtime SFU) & TURN Service
+ *
+ * Cloudflare Calls provides serverless WebRTC media infrastructure.
+ * This service handles server-to-server calls to Cloudflare's Calls API:
+ * - Session creation
+ * - Track publishing and subscription
+ * - Track closure
+ * - Short-lived TURN credentials
+ *
+ * All privileged Cloudflare API credentials (CALLS_APP_ID and CALLS_APP_SECRET)
+ * are kept strictly on the Worker and never leaked to browser clients.
+ */
+class RealtimeService {
+  constructor(env) {
+    this.env = env;
+    this.appId = env.CALLS_APP_ID || '';
+    this.appSecret = env.CALLS_APP_SECRET || '';
+    this.baseUrl = `https://rtc.live.cloudflare.com/v1/apps/${this.appId}`;
+  }
+  get isConfigured() {
+    return Boolean(this.appId && this.appSecret && this.appId !== 'placeholder_app_id');
+  }
+
+  /**
+   * Create a new WebRTC session with Cloudflare Calls SFU.
+   */
+  async createSession() {
+    if (!this.isConfigured) {
+      // Mock / Local Development fallback when Cloudflare Calls credentials are not configured yet
+      const mockSessionId = 'calls-sess-' + crypto.randomUUID();
+      return {
+        sessionId: mockSessionId
+      };
+    }
+    const response = await fetch(`${this.baseUrl}/sessions/new`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.appSecret}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`CALLS_API_ERROR: Failed to create session (${response.status}): ${errText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Publish local tracks or subscribe to remote tracks on a session.
+   */
+  async newTracks(sessionId, data) {
+    if (!this.isConfigured) {
+      // Mock response for local development
+      return {
+        sessionDescription: data.sessionDescription ? {
+          type: 'answer',
+          sdp: 'v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=MockCallsSFU\r\nt=0 0\r\na=sendrecv\r\n'
+        } : undefined,
+        tracks: (data.tracks || []).map(t => ({
+          location: t.location,
+          mid: t.mid,
+          trackName: t.trackName,
+          sessionId: t.sessionId,
+          status: 'active'
+        }))
+      };
+    }
+    const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/tracks/new`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.appSecret}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(data)
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`CALLS_API_ERROR: Failed to update tracks (${response.status}): ${errText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Close specific tracks on a session.
+   */
+  async closeTracks(sessionId, trackNames) {
+    if (!this.isConfigured) {
+      return;
+    }
+    const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/tracks/close`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.appSecret}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        tracks: trackNames.map(name => ({
+          trackName: name
+        }))
+      })
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`CALLS_API_ERROR: Failed to close tracks (${response.status}): ${errText}`);
+    }
+  }
+
+  /**
+   * Generate short-lived Cloudflare TURN credentials.
+   * TURN credentials allow clients behind strict NAT/firewalls to connect via Cloudflare TURN servers.
+   */
+  async getTurnCredentials(ttlSeconds = 86400) {
+    if (!this.isConfigured) {
+      // Standard public STUN fallback for local development
+      return {
+        iceServers: [{
+          urls: 'stun:stun.cloudflare.com:3478'
+        }, {
+          urls: 'stun:stun.l.google.com:19302'
+        }],
+        ttl: ttlSeconds
+      };
+    }
+    const response = await fetch(`${this.baseUrl}/turn/credentials`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.appSecret}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ttl: ttlSeconds
+      })
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`CALLS_API_ERROR: Failed to get TURN credentials (${response.status}): ${errText}`);
+    }
+    return response.json();
+  }
+}
+exports.RealtimeService = RealtimeService;
