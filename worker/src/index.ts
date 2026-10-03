@@ -22,13 +22,15 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const origin = request.headers.get('Origin');
 
+    const allowedOrigin = env.ALLOWED_ORIGIN || env.APP_URL || '';
+
     // Handle CORS preflight
-    const corsResponse = handleCors(request);
+    const corsResponse = handleCors(request, allowedOrigin);
     if (corsResponse) return corsResponse;
 
     try {
       const response = await handleRequest(request, env, ctx);
-      return addCorsHeaders(response, origin);
+      return addCorsHeaders(response, origin, allowedOrigin);
     } catch (err: any) {
       console.error('[Worker Unhandled Error]', {
         message: err.message,
@@ -51,7 +53,7 @@ export default {
         else if (code.includes('EXISTS')) status = 409;
       }
 
-      return addCorsHeaders(errorResponse(code, message, status), origin);
+      return addCorsHeaders(errorResponse(code, message, status), origin, allowedOrigin);
     }
   },
 };

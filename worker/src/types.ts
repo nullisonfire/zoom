@@ -210,4 +210,5 @@ export interface Env {
   CALLS_APP_ID?: string;
   CALLS_APP_SECRET?: string;
   APP_URL?: string;
+  ALLOWED_ORIGIN?: string;
 }

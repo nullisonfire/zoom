@@ -68,8 +68,17 @@ export function useRoomWebSocket({
       socketRef.current = null;
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/rooms/${publicId}/websocket`;
+    const apiBase = (import.meta.env.VITE_API_BASE || '/api').replace(/\/$/, '');
+    let wsBase: string;
+
+    if (/^https?:\/\//i.test(apiBase)) {
+      wsBase = apiBase.replace(/^http/i, 'ws').replace(/\/api$/, '');
+    } else {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsBase = `${protocol}//${window.location.host}`;
+    }
+
+    const wsUrl = `${wsBase}/api/rooms/${publicId}/websocket`;
 
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;

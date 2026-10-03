@@ -1,67 +1,38 @@
 name = "cloudflare-zoom"
 main = "worker/src/index.ts"
-compatibility_date = "2024-09-23"
+compatibility_date = "2026-10-03"
 compatibility_flags = ["nodejs_compat"]
-
-# Static Assets for Cloudflare Pages / Workers Sites
-# When deploying Pages with Functions, Pages serves the frontend
-# When deploying as full Worker, assets can be bound directly
 
 [vars]
 ENVIRONMENT = "development"
 APP_URL = "http://localhost:5173"
-CALLS_APP_ID = ""
-CALLS_APP_SECRET = ""
+ALLOWED_ORIGIN = "http://localhost:5173"
 
-# 1. Cloudflare D1 Relational Database Binding
 [[d1_databases]]
 binding = "DB"
 database_name = "zoom-db"
-database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+database_id = "REPLACE_WITH_DEV_D1_ID"
 migrations_dir = "migrations"
 
-# 2. Cloudflare Durable Objects for Realtime Room Coordination
 [[durable_objects.bindings]]
 name = "MEETING_ROOMS"
 class_name = "MeetingRoom"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["MeetingRoom"]
+new_sqlite_classes = ["MeetingRoom"]
 
-# 3. Cloudflare R2 Object Storage Binding
 [[r2_buckets]]
 binding = "STORAGE"
 bucket_name = "zoom-media-storage"
-preview_bucket_name = "zoom-media-storage-preview"
 
-# ================= PREVIEW ENVIRONMENT =================
-[env.preview]
-name = "cloudflare-zoom-preview"
-[env.preview.vars]
-ENVIRONMENT = "preview"
-APP_URL = "https://preview.zoom-cf.pages.dev"
-
-[[env.preview.d1_databases]]
-binding = "DB"
-database_name = "zoom-db-preview"
-database_id = "preview-db-id-placeholder"
-migrations_dir = "migrations"
-
-[[env.preview.durable_objects.bindings]]
-name = "MEETING_ROOMS"
-class_name = "MeetingRoom"
-
-[[env.preview.r2_buckets]]
-binding = "STORAGE"
-bucket_name = "zoom-media-storage-preview"
-
-# ================= PRODUCTION ENVIRONMENT =================
 [env.production]
 name = "cloudflare-zoom-production"
+
 [env.production.vars]
 ENVIRONMENT = "production"
-APP_URL = "https://meet.yourdomain.com"
+APP_URL = "https://zoom-d43.pages.dev"
+ALLOWED_ORIGIN = "https://zoom-d43.pages.dev"
 
 [[env.production.d1_databases]]
 binding = "DB"
@@ -72,6 +43,10 @@ migrations_dir = "migrations"
 [[env.production.durable_objects.bindings]]
 name = "MEETING_ROOMS"
 class_name = "MeetingRoom"
+
+[[env.production.migrations]]
+tag = "v1"
+new_sqlite_classes = ["MeetingRoom"]
 
 [[env.production.r2_buckets]]
 binding = "STORAGE"

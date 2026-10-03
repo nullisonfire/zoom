@@ -57,32 +57,41 @@ export function errorResponse(code: string, message: string, status: number = 40
   });
 }
 
-export function handleCors(request: Request): Response | null {
-  if (request.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        'Access-Control-Allow-Origin': request.headers.get('Origin') || '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, Cookie',
-        'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Max-Age': '86400',
-      },
-    });
+export function handleCors(request: Request, allowedOrigin = ''): Response | null {
+  if (request.method !== 'OPTIONS') return null;
+
+  const origin = request.headers.get('Origin');
+  if (!origin || origin !== allowedOrigin) {
+    return new Response(null, { status: 403 });
   }
-  return null;
+
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Cookie, X-File-Name, X-File-Type',
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Max-Age': '86400',
+      'Vary': 'Origin',
+    },
+  });
 }
 
-export function addCorsHeaders(response: Response, origin: string | null): Response {
+export function addCorsHeaders(response: Response, origin: string | null, allowedOrigin = ''): Response {
   const newHeaders = new Headers(response.headers);
-  newHeaders.set('Access-Control-Allow-Origin', origin || '*');
-  newHeaders.set('Access-Control-Allow-Credentials', 'true');
+  if (origin && origin === allowedOrigin) {
+    newHeaders.set('Access-Control-Allow-Origin', origin);
+    newHeaders.set('Access-Control-Allow-Credentials', 'true');
+    newHeaders.set('Vary', 'Origin');
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers: newHeaders,
   });
 }
+
 
 /**
  * Extract authenticated user and session from Cookie or Bearer token.

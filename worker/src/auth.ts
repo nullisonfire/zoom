@@ -153,7 +153,7 @@ export function parseCookies(cookieHeader: string | null): Record<string, string
 export function buildSessionCookie(sessionId: string, expiresAt: number, isProduction: boolean): string {
   const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
   const secureFlag = isProduction ? '; Secure' : '';
-  return `session_id=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secureFlag}`;
+  return `session_id=${sessionId}; Path=/; HttpOnly; SameSite=${isProduction ? 'None' : 'Lax'}; Max-Age=${maxAge}${secureFlag}`;
 }
 
 /**
@@ -161,7 +161,7 @@ export function buildSessionCookie(sessionId: string, expiresAt: number, isProdu
  */
 export function buildClearSessionCookie(isProduction: boolean): string {
   const secureFlag = isProduction ? '; Secure' : '';
-  return `session_id=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureFlag}`;
+  return `session_id=; Path=/; HttpOnly; SameSite=${isProduction ? 'None' : 'Lax'}; Max-Age=0${secureFlag}`;
 }
 
 export class AuthService {

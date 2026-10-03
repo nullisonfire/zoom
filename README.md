@@ -181,24 +181,39 @@ wrangler secret put CALLS_APP_ID --env production
 wrangler secret put CALLS_APP_SECRET --env production
 ```
 
-### 5. Deploy the Cloudflare Worker & Durable Objects
-Deploy the backend API and Durable Object room coordinator:
-```bash
-npm run build:worker
-npm run deploy:worker
-```
-*This deploys the `cloudflare-zoom-production` worker with D1, Durable Objects, and R2 bindings.*
+### 5. Production URLs used by this project
+This project is configured to use Cloudflare-provided hostnames only; no custom domain is required.
 
-### 6. Deploy the Frontend to Cloudflare Pages
-Build the React frontend and deploy to Cloudflare Pages:
+- **Pages app:** `https://zoom-d43.pages.dev`
+- **Worker API:** `https://cloudflare-zoom-production.icab.workers.dev`
+- **Worker API base:** `https://cloudflare-zoom-production.icab.workers.dev/api`
+
+The production frontend gets its API URL from `frontend/.env.production`. The Worker CORS policy only permits the Pages origin above.
+
+### 6. Deploy the Cloudflare Worker & Durable Objects
+Do not use the old `scripts/build.cjs` Babel compiler. Wrangler bundles the Worker directly from `worker/src/index.ts`.
+
 ```bash
-npm run build:frontend
-npm run deploy:pages
+npx wrangler d1 migrations apply zoom-db-production --remote --env production
+npx wrangler secret put CALLS_APP_ID --env production
+npx wrangler secret put CALLS_APP_SECRET --env production
+npx wrangler deploy --env production
 ```
-Or connect your GitHub repository directly to Cloudflare Pages:
-- **Build command:** `cd frontend && npm run build`
-- **Build output directory:** `frontend/dist`
-- **Root directory:** `/`
+
+This deploys the `cloudflare-zoom-production` Worker with D1, Durable Objects, and R2 bindings.
+
+### 7. Deploy the Frontend to Cloudflare Pages
+For the GitHub-connected Pages project use:
+
+- **Production branch:** `main`
+- **Root directory:** `frontend`
+- **Build command:** `npm run build`
+- **Build output directory:** `dist`
+
+The production API URL is already defined in `frontend/.env.production`:
+`VITE_API_BASE=https://cloudflare-zoom-production.icab.workers.dev/api`
+
+After deployment the app is available at `https://zoom-d43.pages.dev`.
 
 ---
 
