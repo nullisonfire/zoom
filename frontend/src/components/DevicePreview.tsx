@@ -22,7 +22,6 @@ export const DevicePreview: React.FC<DevicePreviewProps> = ({
   canEditName = false,
   onJoin,
   onCancel,
-  canEditName = false,
 }) => {
   const [audioEnabled, setAudioEnabled] = useState(!meeting.settings.muteOnJoin);
   const [videoEnabled, setVideoEnabled] = useState(!meeting.settings.videoOffOnJoin);
