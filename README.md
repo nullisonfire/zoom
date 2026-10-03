@@ -292,3 +292,34 @@ node scripts/verify_frontend.cjs
 - **Cloudflare Calls Regional Availability**: Cloudflare Calls operates globally on Cloudflare's Anycast network; however, browser WebRTC support requires HTTPS when accessing camera and microphone devices.
 - **Durable Objects Concurrency**: Durable Objects provide single-threaded execution per room, guaranteeing consistency for up to hundreds of concurrent participants per meeting.
 - **Recording Architecture**: Cloudflare Calls provides an egress recording API that records media tracks to Cloudflare R2. In this release, recording metadata tables and R2 storage keys are pre-configured; initiating a server-side Calls recording job connects to the `/sessions/{id}/recordings` endpoint when enabled in your Cloudflare Calls account.
+
+## Cloudflare Realtime TURN configuration
+
+The Realtime SFU app credentials and TURN credentials are separate. Configure the SFU secrets:
+
+```bash
+npx wrangler secret put CALLS_APP_ID --env production
+npx wrangler secret put CALLS_APP_SECRET --env production
+```
+
+Then create a Cloudflare Realtime TURN key and configure:
+
+```bash
+npx wrangler secret put TURN_KEY_ID --env production
+npx wrangler secret put TURN_KEY_API_TOKEN --env production
+```
+
+The Worker generates short-lived TURN credentials through:
+`POST https://rtc.live.cloudflare.com/v1/turn/keys/{TURN_KEY_ID}/credentials/generate-ice-servers`
+
+Cloudflare permits TURN credentials for up to 48 hours; the Worker caps the requested TTL at 172800 seconds.
+
+## Production behavior (patched)
+
+- Frontend: https://zoom-d43.pages.dev
+- Worker/API: https://cloudflare-zoom-production.icab.workers.dev
+- Meeting creation requires an authenticated account.
+- Meeting joining does not require authentication; guests enter a display name and optional meeting password.
+- Cloudflare Realtime uses separate SFU sessions for publishing and receiving, real transceiver MIDs, ICE gathering before track negotiation, and the required `/renegotiate` flow for subscriber answers.
+- Meeting file listing and downloads are available to participants without authentication; uploads remain restricted to authenticated users.
+- Worker CORS allows the Pages origin and WebSocket 101 responses are returned untouched.

@@ -7,20 +7,40 @@ export interface CallsTrackInfo {
   trackId: string;
 }
 
+function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
+  if (pc.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      if (pc.iceGatheringState === 'complete') {
+        pc.removeEventListener('icegatheringstatechange', done);
+        resolve();
+      }
+    };
+    pc.addEventListener('icegatheringstatechange', done);
+    setTimeout(() => {
+      pc.removeEventListener('icegatheringstatechange', done);
+      resolve();
+    }, 8000);
+  });
+}
+
 export class CallsWebRTCClient {
   private publicId: string;
-  private sessionId: string | null = null;
+  private publishSessionId: string | null = null;
+  private subscribeSessionId: string | null = null;
   private pushPeer: RTCPeerConnection | null = null;
   private pullPeer: RTCPeerConnection | null = null;
   private iceServers: RTCIceServer[] = [];
+  private remoteMidMap = new Map<string, { participantId: string; trackType: 'audio' | 'video' | 'screen' }>();
+  private remoteTracks = new Map<string, { audio?: MediaStreamTrack; video?: MediaStreamTrack; screen?: MediaStreamTrack }>();
+  private remoteStreams = new Map<string, MediaStream>();
+  private subscriptionChain: Promise<void> = Promise.resolve();
+  private screenTransceiver: RTCRtpTransceiver | null = null;
 
-  // Local tracks
   private localAudioTrack: MediaStreamTrack | null = null;
   private localVideoTrack: MediaStreamTrack | null = null;
   private localScreenTrack: MediaStreamTrack | null = null;
 
-  // Remote streams: participantId -> MediaStream
-  private remoteStreams = new Map<string, MediaStream>();
   private onRemoteTrackCallback?: (participantId: string, stream: MediaStream) => void;
   private onRemoteTrackRemovedCallback?: (participantId: string) => void;
 
@@ -36,252 +56,182 @@ export class CallsWebRTCClient {
     this.onRemoteTrackRemovedCallback = callbacks.onRemoteTrackRemoved;
   }
 
-  /**
-   * Initialize WebRTC connections and Cloudflare Calls Session
-   */
   async init(): Promise<string> {
-    // 1. Fetch short-lived TURN credentials from Cloudflare
-    try {
-      const turnData = await api.getTurnCredentials(this.publicId);
-      this.iceServers = turnData.iceServers;
-    } catch (_) {
-      this.iceServers = [
-        { urls: 'stun:stun.cloudflare.com:3478' },
-        { urls: 'stun:stun.l.google.com:19302' },
-      ];
-    }
+    const turnData = await api.getTurnCredentials(this.publicId);
+    this.iceServers = turnData.iceServers;
 
-    // 2. Create Calls session on Cloudflare
-    const sessionRes = await api.createCallsSession(this.publicId);
-    this.sessionId = sessionRes.sessionId;
+    const publish = await api.createCallsSession(this.publicId);
+    const subscribe = await api.createCallsSession(this.publicId);
+    this.publishSessionId = publish.sessionId;
+    this.subscribeSessionId = subscribe.sessionId;
 
-    // 3. Initialize RTCPeerConnection for publishing
     this.pushPeer = new RTCPeerConnection({ iceServers: this.iceServers });
-
-    // 4. Initialize RTCPeerConnection for subscribing
     this.pullPeer = new RTCPeerConnection({ iceServers: this.iceServers });
 
     this.pullPeer.ontrack = (event) => {
-      // Find or create remote stream for incoming tracks
-      const stream = event.streams[0] || new MediaStream([event.track]);
-      const trackId = event.track.id;
-
-      // Extract participant mapping if available
-      // The stream is assigned to participant
-      if (this.onRemoteTrackCallback) {
-        // Will be associated via participantId registry
-        this.onRemoteTrackCallback(trackId, stream);
+      const mid = event.transceiver?.mid;
+      const mapping = mid ? this.remoteMidMap.get(mid) : undefined;
+      if (!mapping) {
+        console.warn('[CallsWebRTCClient] Received track with unknown mid', mid);
+        return;
       }
+      const { participantId, trackType } = mapping;
+      const tracks = this.remoteTracks.get(participantId) || {};
+      tracks[trackType] = event.track;
+      this.remoteTracks.set(participantId, tracks);
+      this.emitRemoteStream(participantId);
+
+      event.track.onended = () => {
+        const current = this.remoteTracks.get(participantId);
+        if (!current) return;
+        if (current[trackType]?.id === event.track.id) delete current[trackType];
+        if (!current.audio && !current.video && !current.screen) {
+          this.remoteTracks.delete(participantId);
+          this.remoteStreams.delete(participantId);
+          this.onRemoteTrackRemovedCallback?.(participantId);
+        } else {
+          this.remoteTracks.set(participantId, current);
+          this.emitRemoteStream(participantId);
+        }
+      };
     };
 
-    return this.sessionId;
+    return this.publishSessionId!;
   }
 
-  /**
-   * Publish local audio and video tracks to Cloudflare Calls SFU
-   */
-  async publishLocalTracks(
-    stream: MediaStream
-  ): Promise<{ audio?: string; video?: string }> {
-    if (!this.pushPeer || !this.sessionId) {
-      throw new Error('CallsWebRTCClient not initialized');
-    }
+  private emitRemoteStream(participantId: string): void {
+    const tracks = this.remoteTracks.get(participantId);
+    if (!tracks) return;
+    const stream = new MediaStream();
+    if (tracks.audio) stream.addTrack(tracks.audio);
+    // Prefer screen video while screen sharing; otherwise camera video.
+    if (tracks.screen) stream.addTrack(tracks.screen);
+    else if (tracks.video) stream.addTrack(tracks.video);
+    this.remoteStreams.set(participantId, stream);
+    this.onRemoteTrackCallback?.(participantId, stream);
+  }
 
-    const audioTrack = stream.getAudioTracks()[0];
-    const videoTrack = stream.getVideoTracks()[0];
+  async publishLocalTracks(stream: MediaStream): Promise<{ audio?: string; video?: string }> {
+    if (!this.pushPeer || !this.publishSessionId) throw new Error('CallsWebRTCClient not initialized');
 
-    const tracksToRegister: any[] = [];
+    const tracks: Array<{ track: MediaStreamTrack; name: 'microphone' | 'camera'; key: 'audio' | 'video' }> = [];
+    const audio = stream.getAudioTracks()[0];
+    const video = stream.getVideoTracks()[0];
+    if (audio) tracks.push({ track: audio, name: 'microphone', key: 'audio' });
+    if (video) tracks.push({ track: video, name: 'camera', key: 'video' });
+    if (!tracks.length) return {};
 
-    if (audioTrack) {
-      this.localAudioTrack = audioTrack;
-      const audioSender = this.pushPeer.addTrack(audioTrack, stream);
-      tracksToRegister.push({
-        location: 'local',
-        mid: audioSender.transport ? '0' : 'audio',
-        trackName: 'audio',
-      });
-    }
-
-    if (videoTrack) {
-      this.localVideoTrack = videoTrack;
-      const videoSender = this.pushPeer.addTrack(videoTrack, stream);
-      tracksToRegister.push({
-        location: 'local',
-        mid: videoSender.transport ? '1' : 'video',
-        trackName: 'video',
-      });
-    }
-
-    if (tracksToRegister.length === 0) {
-      return {};
-    }
-
-    // Create SDP offer
+    const transceivers = tracks.map(({ track }) => this.pushPeer!.addTransceiver(track, { direction: 'sendonly' }));
     const offer = await this.pushPeer.createOffer();
     await this.pushPeer.setLocalDescription(offer);
+    await waitForIceGatheringComplete(this.pushPeer);
 
-    // Send offer to Cloudflare Calls SFU
-    const response = await api.updateCallsTracks(this.publicId, this.sessionId, {
-      sessionDescription: {
-        sdp: offer.sdp!,
-        type: 'offer',
-      },
-      tracks: tracksToRegister,
+    const registrations = tracks.map((item, i) => ({
+      location: 'local' as const,
+      mid: transceivers[i].mid,
+      trackName: item.name,
+    }));
+
+    if (registrations.some((x) => !x.mid)) throw new Error('Cloudflare Calls did not assign media mids');
+
+    const response = await api.updateCallsTracks(this.publicId, this.publishSessionId, {
+      sessionDescription: this.pushPeer.localDescription,
+      tracks: registrations,
     });
 
-    // Set SFU's answer SDP
-    if (response?.sessionDescription?.sdp) {
-      await this.pushPeer.setRemoteDescription(
-        new RTCSessionDescription({
-          type: 'answer',
-          sdp: response.sessionDescription.sdp,
-        })
-      );
+    if (response?.sessionDescription) {
+      await this.pushPeer.setRemoteDescription(response.sessionDescription);
     }
 
-    return {
-      audio: audioTrack ? 'audio' : undefined,
-      video: videoTrack ? 'video' : undefined,
-    };
+    this.localAudioTrack = audio || null;
+    this.localVideoTrack = video || null;
+    return { audio: audio ? 'microphone' : undefined, video: video ? 'camera' : undefined };
   }
 
-  /**
-   * Publish or replace screen sharing track
-   */
   async publishScreenTrack(screenTrack: MediaStreamTrack): Promise<string> {
-    if (!this.pushPeer || !this.sessionId) {
-      throw new Error('CallsWebRTCClient not initialized');
-    }
+    if (!this.pushPeer || !this.publishSessionId) throw new Error('CallsWebRTCClient not initialized');
 
     this.localScreenTrack = screenTrack;
-    const stream = new MediaStream([screenTrack]);
-    this.pushPeer.addTrack(screenTrack, stream);
-
+    const transceiver = this.pushPeer.addTransceiver(screenTrack, { direction: 'sendonly' });
+    this.screenTransceiver = transceiver;
     const offer = await this.pushPeer.createOffer();
     await this.pushPeer.setLocalDescription(offer);
+    await waitForIceGatheringComplete(this.pushPeer);
 
-    const response = await api.updateCallsTracks(this.publicId, this.sessionId, {
-      sessionDescription: {
-        sdp: offer.sdp!,
-        type: 'offer',
-      },
-      tracks: [
-        {
-          location: 'local',
-          trackName: 'screen',
-        },
-      ],
+    if (!transceiver.mid) throw new Error('Cloudflare Calls did not assign a screen-share mid');
+
+    const response = await api.updateCallsTracks(this.publicId, this.publishSessionId, {
+      sessionDescription: this.pushPeer.localDescription,
+      tracks: [{ location: 'local', mid: transceiver.mid, trackName: 'screen' }],
     });
 
-    if (response?.sessionDescription?.sdp) {
-      await this.pushPeer.setRemoteDescription(
-        new RTCSessionDescription({
-          type: 'answer',
-          sdp: response.sessionDescription.sdp,
-        })
-      );
-    }
+    if (response?.sessionDescription) await this.pushPeer.setRemoteDescription(response.sessionDescription);
 
-    screenTrack.onended = () => {
-      this.unpublishScreenTrack();
-    };
-
+    screenTrack.onended = () => { void this.unpublishScreenTrack(); };
     return 'screen';
   }
 
   async unpublishScreenTrack(): Promise<void> {
-    if (this.localScreenTrack && this.sessionId) {
-      this.localScreenTrack.stop();
-      this.localScreenTrack = null;
-      try {
-        await api.closeCallsTracks(this.publicId, this.sessionId, ['screen']);
-      } catch (_) {}
-    }
-  }
-
-  /**
-   * Subscribe to a remote participant's track via Cloudflare Calls SFU
-   */
-  async subscribeToTrack(trackInfo: CallsTrackInfo): Promise<void> {
-    if (!this.pullPeer || !this.sessionId) return;
-
+    if (!this.localScreenTrack || !this.pushPeer || !this.publishSessionId) return;
+    this.localScreenTrack.stop();
+    this.localScreenTrack = null;
     try {
-      const response = await api.updateCallsTracks(this.publicId, this.sessionId, {
-        tracks: [
-          {
-            location: 'remote',
-            sessionId: trackInfo.callsSessionId,
-            trackName: trackInfo.trackType,
-          },
-        ],
-      });
+      if (this.screenTransceiver?.mid) await api.closeCallsTracks(this.publicId, this.publishSessionId, [{ mid: this.screenTransceiver.mid }]);
+      this.screenTransceiver = null;
+    } catch (_) {}
+  }
 
-      if (response?.sessionDescription?.sdp) {
-        await this.pullPeer.setRemoteDescription(
-          new RTCSessionDescription({
-            type: response.sessionDescription.type,
-            sdp: response.sessionDescription.sdp,
-          })
-        );
-
-        const answer = await this.pullPeer.createAnswer();
-        await this.pullPeer.setLocalDescription(answer);
-
-        // Send answer back to SFU if renegotiation needed
-        await api.updateCallsTracks(this.publicId, this.sessionId, {
-          sessionDescription: {
-            type: 'answer',
-            sdp: answer.sdp!,
-          },
-        });
-      }
-    } catch (err) {
+  async subscribeToTrack(trackInfo: CallsTrackInfo): Promise<void> {
+    this.subscriptionChain = this.subscriptionChain.then(() => this.subscribeOne(trackInfo)).catch((err) => {
       console.warn('[CallsWebRTCClient] subscribeToTrack error:', err);
-    }
+    });
+    return this.subscriptionChain;
   }
 
-  /**
-   * Mute or unmute local audio
-   */
+  private async subscribeOne(trackInfo: CallsTrackInfo): Promise<void> {
+    if (!this.pullPeer || !this.subscribeSessionId) return;
+
+    const response = await api.updateCallsTracks(this.publicId, this.subscribeSessionId, {
+      tracks: [{
+        location: 'remote',
+        sessionId: trackInfo.callsSessionId,
+        trackName: trackInfo.trackType === 'audio' ? 'microphone' : trackInfo.trackType === 'video' ? 'camera' : 'screen',
+      }],
+    });
+
+    const result = response?.tracks?.find((t: any) => t.location === 'remote' && t.mid);
+    if (result?.mid) this.remoteMidMap.set(result.mid, { participantId: trackInfo.participantId, trackType: trackInfo.trackType });
+
+    if (!response?.sessionDescription) return;
+
+    await this.pullPeer.setRemoteDescription(response.sessionDescription);
+    const answer = await this.pullPeer.createAnswer();
+    await this.pullPeer.setLocalDescription(answer);
+    await waitForIceGatheringComplete(this.pullPeer);
+    await api.renegotiateCallsSession(this.publicId, this.subscribeSessionId, this.pullPeer.localDescription);
+  }
+
   setAudioEnabled(enabled: boolean): void {
-    if (this.localAudioTrack) {
-      this.localAudioTrack.enabled = enabled;
-    }
+    if (this.localAudioTrack) this.localAudioTrack.enabled = enabled;
   }
 
-  /**
-   * Enable or disable local video
-   */
   setVideoEnabled(enabled: boolean): void {
-    if (this.localVideoTrack) {
-      this.localVideoTrack.enabled = enabled;
-    }
+    if (this.localVideoTrack) this.localVideoTrack.enabled = enabled;
   }
 
-  /**
-   * Close all WebRTC connections and clean up
-   */
   destroy(): void {
-    if (this.localAudioTrack) {
-      this.localAudioTrack.stop();
-      this.localAudioTrack = null;
-    }
-    if (this.localVideoTrack) {
-      this.localVideoTrack.stop();
-      this.localVideoTrack = null;
-    }
-    if (this.localScreenTrack) {
-      this.localScreenTrack.stop();
-      this.localScreenTrack = null;
-    }
-    if (this.pushPeer) {
-      this.pushPeer.close();
-      this.pushPeer = null;
-    }
-    if (this.pullPeer) {
-      this.pullPeer.close();
-      this.pullPeer = null;
-    }
+    this.localAudioTrack?.stop();
+    this.localVideoTrack?.stop();
+    this.localScreenTrack?.stop();
+    this.localAudioTrack = null;
+    this.localVideoTrack = null;
+    this.localScreenTrack = null;
+    this.pushPeer?.close();
+    this.pullPeer?.close();
+    this.pushPeer = null;
+    this.pullPeer = null;
     this.remoteStreams.clear();
+    this.remoteTracks.clear();
+    this.remoteMidMap.clear();
   }
 }

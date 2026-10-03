@@ -209,6 +209,8 @@ export interface Env {
   COOKIE_SECRET?: string;
   CALLS_APP_ID?: string;
   CALLS_APP_SECRET?: string;
+  TURN_KEY_ID?: string;
+  TURN_KEY_API_TOKEN?: string;
   APP_URL?: string;
   ALLOWED_ORIGIN?: string;
 }

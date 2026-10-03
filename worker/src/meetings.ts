@@ -74,6 +74,31 @@ export class MeetingService {
     };
   }
 
+  async joinAsGuest(params: {
+    publicId: string;
+    name: string;
+    password?: string;
+  }): Promise<{ meeting: Meeting; role: 'participant'; guestName: string }> {
+    const rawMeeting = await this.db.getMeetingByPublicId(params.publicId);
+    if (!rawMeeting) throw new Error('MEETING_NOT_FOUND: Meeting not found');
+    if (rawMeeting.status === 'ended') throw new Error('MEETING_ENDED: This meeting has already concluded');
+    if (rawMeeting.password_hash) {
+      if (!params.password) throw new Error('PASSWORD_REQUIRED: This meeting is password-protected');
+      const isValid = await verifyPassword(params.password, rawMeeting.password_hash);
+      if (!isValid) throw new Error('INVALID_PASSWORD: Incorrect meeting password');
+    }
+    if (rawMeeting.status === 'scheduled') {
+      await this.db.updateMeetingStatus(rawMeeting.id, 'active');
+      rawMeeting.status = 'active';
+    }
+    const guestName = params.name.replace(/\s+/g, ' ').trim().slice(0, 80) || 'Guest';
+    return {
+      meeting: { ...rawMeeting, is_host: false, password_hash: null },
+      role: 'participant',
+      guestName,
+    };
+  }
+
   async joinMeeting(params: {
     publicId: string;
     user: User;

@@ -221,11 +221,19 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
     // POST /api/meetings/:publicId/join (Join verification & record)
     if (subPath === '/join' && method === 'POST') {
-      const auth = await requireAuth(request, authService);
       const body = await request.json<any>().catch(() => ({}));
-      const result = await meetingService.joinMeeting({
+      const auth = await getOptionalUser(request, authService);
+      if (auth) {
+        const result = await meetingService.joinMeeting({
+          publicId,
+          user: auth.user,
+          password: body.password,
+        });
+        return jsonResponse(result);
+      }
+      const result = await meetingService.joinAsGuest({
         publicId,
-        user: auth.user,
+        name: String(body.name || 'Guest').trim(),
         password: body.password,
       });
       return jsonResponse(result);
@@ -249,14 +257,14 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
     // POST /api/meetings/:publicId/realtime/session (Create Calls SFU Session)
     if (subPath === '/realtime/session' && method === 'POST') {
-      await requireAuth(request, authService);
+      await meetingService.getMeeting(publicId);
       const sessionResult = await realtimeService.createSession();
       return jsonResponse(sessionResult);
     }
 
     // POST /api/meetings/:publicId/realtime/tracks/new (Publish/Subscribe Tracks)
     if (subPath === '/realtime/tracks/new' && method === 'POST') {
-      await requireAuth(request, authService);
+      await meetingService.getMeeting(publicId);
       const body = await request.json<any>();
       const sessionId = body.sessionId;
       if (!sessionId) {
@@ -272,20 +280,31 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     }
 
     // POST /api/meetings/:publicId/realtime/tracks/close
-    if (subPath === '/realtime/tracks/close' && method === 'POST') {
-      await requireAuth(request, authService);
+    if (subPath === '/realtime/tracks/close' && method === 'PUT') {
+      await meetingService.getMeeting(publicId);
       const body = await request.json<any>();
-      if (!body.sessionId || !Array.isArray(body.trackNames)) {
-        return errorResponse('INVALID_REQUEST', 'sessionId and trackNames array are required');
+      if (!body.sessionId || !Array.isArray(body.tracks)) {
+        return errorResponse('INVALID_REQUEST', 'sessionId and tracks array are required');
       }
 
-      await realtimeService.closeTracks(body.sessionId, body.trackNames);
+      await realtimeService.closeTracks(body.sessionId, body.tracks);
       return jsonResponse({ success: true });
+    }
+
+    // PUT /api/meetings/:publicId/realtime/renegotiate
+    if (subPath === '/realtime/renegotiate' && method === 'PUT') {
+      await meetingService.getMeeting(publicId);
+      const body = await request.json<any>();
+      if (!body.sessionId || !body.sessionDescription) {
+        return errorResponse('INVALID_REQUEST', 'sessionId and sessionDescription are required');
+      }
+      const result = await realtimeService.renegotiate(body.sessionId, body.sessionDescription);
+      return jsonResponse(result);
     }
 
     // GET /api/meetings/:publicId/realtime/turn (Get Short-Lived TURN Credentials)
     if (subPath === '/realtime/turn' && method === 'GET') {
-      await requireAuth(request, authService);
+      await meetingService.getMeeting(publicId);
       const turnResult = await realtimeService.getTurnCredentials();
       return jsonResponse(turnResult);
     }
@@ -294,7 +313,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
     // GET /api/meetings/:publicId/files (List shared files)
     if (subPath === '/files' && method === 'GET') {
-      await requireAuth(request, authService);
+      await meetingService.getMeeting(publicId);
       const files = await storageService.listMeetingFiles(publicId);
       return jsonResponse({ files });
     }
@@ -337,7 +356,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     // GET /api/meetings/:publicId/files/:fileId (Download file)
     const fileDownloadMatch = subPath.match(/^\/files\/([a-zA-Z0-9_-]+)$/);
     if (fileDownloadMatch && method === 'GET') {
-      await requireAuth(request, authService);
+      await meetingService.getMeeting(publicId);
       const fileId = fileDownloadMatch[1];
       const { file, r2Object } = await storageService.getMeetingFile(publicId, fileId);
 

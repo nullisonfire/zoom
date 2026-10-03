@@ -14,6 +14,7 @@ interface UseRoomWebSocketProps {
   initialAudioEnabled: boolean;
   initialVideoEnabled: boolean;
   password?: string;
+  enabled?: boolean;
   onTrackPublished?: (trackInfo: {
     participantId: string;
     callsSessionId: string;
@@ -29,6 +30,7 @@ export function useRoomWebSocket({
   initialAudioEnabled,
   initialVideoEnabled,
   password,
+  enabled = true,
   onTrackPublished,
 }: UseRoomWebSocketProps) {
   const [isConnected, setIsConnected] = useState(false);
@@ -50,10 +52,13 @@ export function useRoomWebSocket({
   const reconnectAttemptsRef = useRef(0);
   const isDestroyedRef = useRef(false);
   const participantIdRef = useRef(crypto.randomUUID());
+  const pendingMessagesRef = useRef<ClientMessage[]>([]);
 
   const sendMessage = useCallback((msg: ClientMessage) => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify(msg));
+    } else {
+      pendingMessagesRef.current.push(msg);
     }
   }, []);
 
@@ -96,8 +101,8 @@ export function useRoomWebSocket({
         }
       }, 25000);
 
-      // Send join request
-      sendMessage({
+      // Join first, then flush any queued room actions (for example Calls publication registration).
+      ws.send(JSON.stringify({
         type: 'join',
         participantId: participantIdRef.current,
         userId,
@@ -105,7 +110,10 @@ export function useRoomWebSocket({
         audioEnabled: initialAudioEnabled,
         videoEnabled: initialVideoEnabled,
         password,
-      });
+      }));
+      for (const queued of pendingMessagesRef.current.splice(0)) {
+        ws.send(JSON.stringify(queued));
+      }
     };
 
     ws.onmessage = (event) => {
@@ -116,7 +124,16 @@ export function useRoomWebSocket({
           case 'welcome': {
             setMyParticipant(msg.participant);
             // Filter out self from others list
-            setParticipants(msg.participants.filter((p) => p.participantId !== msg.participant.participantId));
+            const others = msg.participants.filter((p) => p.participantId !== msg.participant.participantId);
+            setParticipants(others);
+            // Existing publications were registered before this participant joined.
+            for (const p of others) {
+              if (p.callsSessionId) {
+                if (p.callsTrackIds.audio) onTrackPublished?.({ participantId: p.participantId, callsSessionId: p.callsSessionId, trackType: 'audio', trackId: p.callsTrackIds.audio });
+                if (p.callsTrackIds.video) onTrackPublished?.({ participantId: p.participantId, callsSessionId: p.callsSessionId, trackType: 'video', trackId: p.callsTrackIds.video });
+                if (p.callsTrackIds.screen) onTrackPublished?.({ participantId: p.participantId, callsSessionId: p.callsSessionId, trackType: 'screen', trackId: p.callsTrackIds.screen });
+              }
+            }
             setWaitingParticipants(msg.waitingParticipants || []);
             setSettings(msg.settings);
             setMeetingTitle(msg.meetingTitle);
@@ -240,6 +257,7 @@ export function useRoomWebSocket({
   }, [publicId, userId, userName, initialAudioEnabled, initialVideoEnabled, password, hasEnded, removedReason, sendMessage, onTrackPublished]);
 
   useEffect(() => {
+    if (!enabled) return;
     isDestroyedRef.current = false;
     connect();
 
@@ -252,7 +270,7 @@ export function useRoomWebSocket({
         socketRef.current = null;
       }
     };
-  }, [connect]);
+  }, [connect, enabled]);
 
   // Actions
   const updateState = useCallback(

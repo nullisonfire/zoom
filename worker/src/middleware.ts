@@ -79,6 +79,13 @@ export function handleCors(request: Request, allowedOrigin = ''): Response | nul
 }
 
 export function addCorsHeaders(response: Response, origin: string | null, allowedOrigin = ''): Response {
+  // A Cloudflare Durable Object WebSocket upgrade must be returned as the
+  // original 101 response. Reconstructing it with `new Response()` is not
+  // allowed because the Fetch Response constructor only accepts 200-599.
+  if (response.status === 101) {
+    return response;
+  }
+
   const newHeaders = new Headers(response.headers);
   if (origin && origin === allowedOrigin) {
     newHeaders.set('Access-Control-Allow-Origin', origin);

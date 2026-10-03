@@ -17,6 +17,7 @@ export const ParticipantTile: React.FC<ParticipantTileProps> = ({
   onTogglePin,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -27,6 +28,14 @@ export const ParticipantTile: React.FC<ParticipantTileProps> = ({
       }
     }
   }, [stream, participant.videoEnabled]);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      const audioStream = stream ? new MediaStream(stream.getAudioTracks()) : null;
+      audioRef.current.srcObject = audioStream;
+      if (audioStream) void audioRef.current.play().catch(() => {});
+    }
+  }, [stream]);
 
   const initials = participant.name
     ? participant.name
@@ -45,6 +54,9 @@ export const ParticipantTile: React.FC<ParticipantTileProps> = ({
           : 'border-slate-800 hover:border-slate-700'
       }`}
     >
+      {/* Audio-only playback for participants whose camera is off */}
+      <audio ref={audioRef} autoPlay playsInline className="hidden" />
+
       {/* Video Stream */}
       {participant.videoEnabled && stream ? (
         <video

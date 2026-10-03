@@ -150,21 +150,24 @@ class ApiClient {
     return this.request<{ sessionId: string }>(`/meetings/${publicId}/realtime/session`, { method: 'POST' });
   }
 
-  async updateCallsTracks(
-    publicId: string,
-    sessionId: string,
-    data: { sessionDescription?: any; tracks?: any[] }
-  ): Promise<any> {
+  async updateCallsTracks(publicId: string, sessionId: string, data: { sessionDescription?: any; tracks?: any[] }): Promise<any> {
     return this.request(`/meetings/${publicId}/realtime/tracks/new`, {
       method: 'POST',
       body: JSON.stringify({ sessionId, ...data }),
     });
   }
 
-  async closeCallsTracks(publicId: string, sessionId: string, trackNames: string[]): Promise<void> {
+  async renegotiateCallsSession(publicId: string, sessionId: string, sessionDescription: any): Promise<any> {
+    return this.request(`/meetings/${publicId}/realtime/renegotiate`, {
+      method: 'PUT',
+      body: JSON.stringify({ sessionId, sessionDescription }),
+    });
+  }
+
+  async closeCallsTracks(publicId: string, sessionId: string, tracks: any[]): Promise<void> {
     await this.request(`/meetings/${publicId}/realtime/tracks/close`, {
-      method: 'POST',
-      body: JSON.stringify({ sessionId, trackNames }),
+      method: 'PUT',
+      body: JSON.stringify({ sessionId, tracks }),
     });
   }
 

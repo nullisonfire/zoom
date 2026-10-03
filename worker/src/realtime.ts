@@ -16,11 +16,15 @@ import { Env, CallsNewSessionResponse, CallsTracksNewRequest, CallsTracksNewResp
 export class RealtimeService {
   private appId: string;
   private appSecret: string;
+  private turnKeyId: string;
+  private turnKeyApiToken: string;
   private baseUrl: string;
 
   constructor(private env: Env) {
     this.appId = env.CALLS_APP_ID || '';
     this.appSecret = env.CALLS_APP_SECRET || '';
+    this.turnKeyId = env.TURN_KEY_ID || '';
+    this.turnKeyApiToken = env.TURN_KEY_API_TOKEN || '';
     this.baseUrl = `https://rtc.live.cloudflare.com/v1/apps/${this.appId}`;
   }
 
@@ -97,20 +101,31 @@ export class RealtimeService {
   /**
    * Close specific tracks on a session.
    */
-  async closeTracks(sessionId: string, trackNames: string[]): Promise<void> {
+  async renegotiate(sessionId: string, sessionDescription: any): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/renegotiate`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${this.appSecret}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionDescription }),
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`CALLS_API_ERROR: Failed to renegotiate (${response.status}): ${errText}`);
+    }
+    return response.json();
+  }
+
+  async closeTracks(sessionId: string, tracks: any[]): Promise<void> {
     if (!this.isConfigured) {
       return;
     }
 
     const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/tracks/close`, {
-      method: 'POST',
+      method: 'PUT',
       headers: {
         Authorization: `Bearer ${this.appSecret}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        tracks: trackNames.map((name) => ({ trackName: name })),
-      }),
+      body: JSON.stringify({ tracks }),
     });
 
     if (!response.ok) {
@@ -124,7 +139,7 @@ export class RealtimeService {
    * TURN credentials allow clients behind strict NAT/firewalls to connect via Cloudflare TURN servers.
    */
   async getTurnCredentials(ttlSeconds: number = 86400): Promise<CallsTurnCredentialsResponse> {
-    if (!this.isConfigured) {
+    if (!this.turnKeyId || !this.turnKeyApiToken) {
       // Standard public STUN fallback for local development
       return {
         iceServers: [
@@ -135,14 +150,17 @@ export class RealtimeService {
       };
     }
 
-    const response = await fetch(`${this.baseUrl}/turn/credentials`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.appSecret}`,
-        'Content-Type': 'application/json',
+    const response = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${this.turnKeyId}/credentials/generate-ice-servers`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.turnKeyApiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ttl: Math.min(ttlSeconds, 172800) }),
       },
-      body: JSON.stringify({ ttl: ttlSeconds }),
-    });
+    );
 
     if (!response.ok) {
       const errText = await response.text();

@@ -5,10 +5,12 @@ import { useMediaDevices } from '../hooks/useMediaDevices';
 interface DevicePreviewProps {
   meeting: Meeting;
   userName: string;
+  canEditName?: boolean;
   onJoin: (options: {
     audioEnabled: boolean;
     videoEnabled: boolean;
     password?: string;
+    name: string;
     stream: MediaStream | null;
   }) => void;
   onCancel: () => void;
@@ -17,12 +19,15 @@ interface DevicePreviewProps {
 export const DevicePreview: React.FC<DevicePreviewProps> = ({
   meeting,
   userName,
+  canEditName = false,
   onJoin,
   onCancel,
+  canEditName = false,
 }) => {
   const [audioEnabled, setAudioEnabled] = useState(!meeting.settings.muteOnJoin);
   const [videoEnabled, setVideoEnabled] = useState(!meeting.settings.videoOffOnJoin);
   const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState(userName || 'Guest');
   const [passwordError, setPasswordError] = useState('');
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -81,10 +86,12 @@ export const DevicePreview: React.FC<DevicePreviewProps> = ({
       return;
     }
     setPasswordError('');
+    const name = displayName.trim() || 'Guest';
     onJoin({
       audioEnabled,
       videoEnabled,
       password: password || undefined,
+      name,
       stream,
     });
   };
@@ -255,11 +262,18 @@ export const DevicePreview: React.FC<DevicePreviewProps> = ({
             <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-4">
               <div>
                 <span className="text-xs font-medium text-slate-400 block mb-1">Joining as</span>
-                <div className="font-semibold text-white text-base flex items-center space-x-2">
+                <input
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value.slice(0, 80))}
+                  disabled={!canEditName}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500 disabled:opacity-70"
+                  placeholder="Your name"
+                />
+                <div className="font-semibold text-white text-base flex items-center space-x-2 mt-2">
                   <div className="w-6 h-6 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold">
-                    {userName.charAt(0).toUpperCase()}
+                    {displayName.charAt(0).toUpperCase()}
                   </div>
-                  <span>{userName}</span>
+                  <span>{displayName}</span>
                 </div>
               </div>
 

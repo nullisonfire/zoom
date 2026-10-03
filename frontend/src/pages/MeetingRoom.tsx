@@ -29,6 +29,7 @@ export const MeetingRoom: React.FC<MeetingRoomProps> = ({ publicId, onLeave }) =
   const [initialAudio, setInitialAudio] = useState(true);
   const [initialVideo, setInitialVideo] = useState(true);
   const [joinPassword, setJoinPassword] = useState<string | undefined>(undefined);
+  const [guestName, setGuestName] = useState('Guest');
 
   // Active side panel
   const [activePanel, setActivePanel] = useState<'participants' | 'chat' | 'files' | null>(null);
@@ -103,10 +104,11 @@ export const MeetingRoom: React.FC<MeetingRoomProps> = ({ publicId, onLeave }) =
   } = useRoomWebSocket({
     publicId,
     userId: user?.id || 'guest',
-    userName: user?.name || 'Guest',
+    userName: user?.name || guestName || 'Guest',
     initialAudioEnabled: initialAudio,
     initialVideoEnabled: initialVideo,
     password: joinPassword,
+    enabled: joined,
     onTrackPublished: handleRemoteTrackPublished,
   });
 
@@ -135,15 +137,17 @@ export const MeetingRoom: React.FC<MeetingRoomProps> = ({ publicId, onLeave }) =
     videoEnabled: boolean;
     password?: string;
     stream: MediaStream | null;
+    name: string;
   }) => {
     try {
       setInitialAudio(options.audioEnabled);
       setInitialVideo(options.videoEnabled);
       setJoinPassword(options.password);
+      setGuestName(options.name || 'Guest');
       setLocalStream(options.stream);
 
-      // Verify password and record in D1
-      await api.joinMeeting(publicId, options.password);
+      // Verify password and authorize the guest/registered participant for the meeting.
+      await api.joinMeeting(publicId, options.password, options.name);
 
       // Initialize Cloudflare Calls WebRTC client
       const callsClient = new CallsWebRTCClient(publicId);
@@ -315,7 +319,8 @@ export const MeetingRoom: React.FC<MeetingRoomProps> = ({ publicId, onLeave }) =
       <div className="min-h-screen bg-slate-950 flex items-center justify-center py-10">
         <DevicePreview
           meeting={meeting}
-          userName={user?.name || 'Guest'}
+          userName={user?.name || guestName || 'Guest'}
+          canEditName={!Boolean(user)}
           onJoin={handlePreJoinConfirm}
           onCancel={onLeave}
         />
@@ -428,7 +433,7 @@ export const MeetingRoom: React.FC<MeetingRoomProps> = ({ publicId, onLeave }) =
         )}
 
         {activePanel === 'files' && (
-          <FilesPanel meetingPublicId={publicId} onClose={() => setActivePanel(null)} />
+          <FilesPanel meetingPublicId={publicId} onClose={() => setActivePanel(null)} canUpload={Boolean(user)} />
         )}
       </div>
 

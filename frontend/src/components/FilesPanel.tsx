@@ -5,9 +5,10 @@ import { api } from '../lib/api';
 interface FilesPanelProps {
   meetingPublicId: string;
   onClose: () => void;
+  canUpload?: boolean;
 }
 
-export const FilesPanel: React.FC<FilesPanelProps> = ({ meetingPublicId, onClose }) => {
+export const FilesPanel: React.FC<FilesPanelProps> = ({ meetingPublicId, onClose, canUpload = true }) => {
   const [files, setFiles] = useState<MeetingFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +77,7 @@ export const FilesPanel: React.FC<FilesPanelProps> = ({ meetingPublicId, onClose
       </div>
 
       {/* Upload Button Section */}
-      <div className="p-4 border-b border-slate-800">
+      {canUpload && <div className="p-4 border-b border-slate-800">
         <input
           ref={fileInputRef}
           type="file"
@@ -98,7 +99,7 @@ export const FilesPanel: React.FC<FilesPanelProps> = ({ meetingPublicId, onClose
           <span className="text-xs text-slate-500">Cloudflare R2 Object Storage (up to 50 MB)</span>
         </button>
         {error && <p className="text-rose-400 text-xs mt-2 text-center">{error}</p>}
-      </div>
+      </div>}
 
       {/* Files List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
